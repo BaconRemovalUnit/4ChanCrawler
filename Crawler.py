@@ -4,45 +4,43 @@
     but at this point there is no way back now
 """
 import hashlib
+import html
 import json
 import logging
 import pickle
-import subprocess
+import re
 import time
 import _thread
 import requests
 import os
-from random import randrange
 import argparse
 from urllib.request import urlretrieve
-
 
 # following is the line where you define your searches
 search_word = "ygyl"
 search_type = ["webm"]
-search_board = ["gif", "wsg"]
+search_board = ["wsg", "gif"]
+
 
 class Piradio4Chan:
     file_hashes = []
     storage_file = "storage.pkl"
 
-    def __init__(self, keyword, input_file_types, input_boards, input_refresh_rate):
+
+    def __init__(self, keyword, input_file_types, input_boards, input_folder=None):
         self.headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1)\
          AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
         self.keyword = keyword
         self.file_types = input_file_types
+        self.boards = input_boards
         self.playlist = []
         self.index = 0
-        self.boards = input_boards
-        self.refresh_rate = input_refresh_rate
-        self.frequency = "87.9"
-        self.shuffle = False
-        self.ps = "Piradio"
-        self.rt = "Raspberry pi Radio Staion"
-        self.pi = "2333"
+        self.refresh_rate = 600
+        self.base_dir = os.getcwd()
+        self.folder = input_folder
+        self.sleep_max = 7
+        self.sleep_count = 0
 
-        if os.path.isfile(self.storage_file):
-            self.file_hashes = pickle.load(open(self.storage_file, "rb"))
         logging.basicConfig(level=logging.WARNING,
                             format='%(asctime)s %(levelname)s %(message)s',
                             datefmt='%a, %d %b %Y %H:%M:%S',
@@ -50,43 +48,49 @@ class Piradio4Chan:
                             filemode='a')
 
     def start(self):
-        _thread.start_new_thread(self.play, ("Downloader", 1))
+        if not self.folder:
+            # remove special letters and then make camel case
+            folder = ''.join(x for x in self.keyword.title() if not x.isspace())
+            self.folder = re.sub(r'[\W_]+', '', folder)[:15]
+
+        self.folder_dir = os.path.join(self.base_dir, self.folder)
+        self.storage_file = self.folder_dir+"/"+self.storage_file
+
+        if os.path.isfile(self.storage_file):
+            self.file_hashes = pickle.load(open(self.storage_file, "rb"))
+
+        print("Searching for {} in board {} with file type {}".format(self.keyword, self.boards, self.file_types))
+        if not os.path.exists(self.folder_dir):
+            print("Creating folder: {}".format(self.folder_dir))
+            os.mkdir(self.folder_dir)
+
+
+        # start the downloader
+        _thread.start_new_thread(self.download, ("Downloader", 1))
+        # start the collector
         while True:
             self.collect()
-            time.sleep(self.refresh_rate)
 
-    def play(self, name, thread_num):
+    def download(self, name, thread_num):
+        index = 0
         while True:
-            if self.playlist:
-                if self.shuffle:
-                    temp = self.index
-                    self.index = randrange(0, len(self.playlist))
-                    # if shuffle back to the same place
-                    if temp == self.index:
-                        if temp == len(self.playlist) - 1:
-                            self.index = 0
-                        else:
-                            self.index += 1
-                else:
-                    self.index += 1
-                    if self.index == len(self.playlist):
-                        self.index = 0
-                selected = self.playlist[self.index]
+            if index < len(self.playlist):
+                self.sleep_count = 0
+                selected = self.playlist[index]
+                index += 1
                 board, thread_id, post_id, file = selected.split("@")
                 link = "boards.4chan.org/{}/thread/{}".format(board, thread_id)
-                print("~" * 80)
                 filename = file.rsplit("/", 1)[-1]
-                if (os.path.isfile(filename)):
-                    print("skipping ", filename)
+                local_filename = self.folder_dir+"/"+filename
+                if os.path.isfile(self.folder_dir+"/"+filename):
+                    print("Skipping {} for duplicate file name.".format(filename))
                     continue
-                print("Downloading:", link, ": No." + post_id + ". ")
-                print(file)
-
+                print("Downloading:{} : No.{}. ,Downloaded {} files.".format(link, post_id,index))
                 try:
                     time.sleep(2)
-                    urlretrieve(file, filename)
+                    urlretrieve(file, local_filename)
                     sha1 = hashlib.sha1()
-                    with open(filename, 'rb') as f:
+                    with open(local_filename, 'rb') as f:
                         while True:
                             data = f.read(65536)
                             if not data:
@@ -94,25 +98,33 @@ class Piradio4Chan:
                             sha1.update(data)
                     new_hash = sha1.hexdigest()
                     if new_hash in self.file_hashes:
-                        print("god damn reposts")
+                        print("{} is a repost REEEEE!!", filename)
                         os.remove(filename)
                         continue
                     self.file_hashes.append(new_hash)
                     pickle.dump(self.file_hashes, open(self.storage_file, 'wb'))
 
-
                 except OSError:
-                    logging.warning("Unable to download {}".format(str(file)))
+                    logging.warning("Unable to download {}.".format(str(file)))
                 else:
-                    logging.info("Downloaded {}".format(str(file)))
+                    logging.info("Downloaded {}.".format(str(file)))
 
+            # if playlist tasks finished increase sleep time
+            else:
+                sleep_time = pow(2, self.sleep_count)
+                print("Empty job list, retrying after {} seconds...".format(sleep_time))
+                time.sleep(sleep_time)
+                if self.sleep_count < self.sleep_max:
+                    self.sleep_count += 1
+
+    # adding new match to the list
     def collect(self):
         for board in self.boards:
-            for page_num in range(1, 10):
+            for page_num in range(1, 11):
                 page_data = requests.get('https://a.4cdn.org/{}/{}.json'.format(board, page_num), headers=self.headers)
                 page_data = json.loads(page_data.content.decode('utf-8'))
                 threads = page_data["threads"]
-                print('https://a.4cdn.org/{}/{}.json'.format(board, page_num))
+                print('>>Searching https://a.4cdn.org/{}/{}.json'.format(board, page_num))
                 for thread in threads:
                     # boolean checker to see if current post meets qualification
                     qualified = False
@@ -126,16 +138,16 @@ class Piradio4Chan:
                         qualified = True
 
                     if "name" in op:
-                        if self.keyword.upper() in op['name'].upper():
+                        if self.keyword.upper() in  html.unescape(op['name']).upper():
                             qualified = True
 
                     if "sub" in op:
-                        if self.keyword.upper() in op['sub'].upper():
-                            qualified = True                   
+                        if self.keyword.upper() in html.unescape(op['sub']).upper():
+                            qualified = True
 
                     # check comment section if there are comments
                     if "com" in op:
-                        if self.keyword.upper() in op["com"].upper():
+                        if self.keyword.upper() in html.unescape(op["com"]).upper():
                             qualified = True
 
                     if qualified:
@@ -155,33 +167,25 @@ class Piradio4Chan:
                                     self.playlist.append(pending)
                 time.sleep(1)  # sleep for each page
             time.sleep(10)  # sleep for each board
-        time.sleep(120)  # sleep for each rescan
+        time.sleep(300)  # sleep for each rescan
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-k", help="keyword")
-parser.add_argument("-f", "--frequency", help="FM frequency")
-parser.add_argument("-b", "--board", nargs='*')
-parser.add_argument("-s", "--shuffle", action="store_true")
-parser.add_argument("-ps")
-parser.add_argument("-rt")
-parser.add_argument("-pi")
+parser.add_argument("-k", help="keywords")
+parser.add_argument("-b", "--board", nargs='*', help="boards to crawl files from")
+parser.add_argument("-t", "--type", nargs="*", help="file types to crawl")
+parser.add_argument("-f", help="target folder")
+
 args = parser.parse_args()
 
-
-x = Piradio4Chan(search_word , search_type, search_board, 60 * 10)
+x = Piradio4Chan(search_word, search_type, search_board)
 if args.k:
     x.keyword = args.k
-if args.frequency:
-    x.frequency = args.frequency
 if args.board:
     x.boards = args.board
-x.shuffle = args.shuffle
-if args.ps:
-    x.ps = args.ps
-if args.rt:
-    x.rt = args.rt
-if args.pi:
-    x.pi = args.pi
+if args.type:
+    x.file_types = args.type
+if args.f:
+    x.folder = args.f
 
 x.start()
