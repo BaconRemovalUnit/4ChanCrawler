@@ -163,7 +163,7 @@ class Piradio4Chan:
                             if "ext" in post and post["ext"][1:] in self.file_types:
                                 download_link = "https://i.4cdn.org/{}/{}{}".format(board, post["tim"], post["ext"])
                                 pending = board + "@" + str(op_id) + "@" + str(post["no"]) + "@" + download_link
-                                if download_link not in self.playlist:
+                                if pending not in self.playlist:
                                     self.playlist.append(pending)
                 time.sleep(1)  # sleep for each page
             time.sleep(10)  # sleep for each board
