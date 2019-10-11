@@ -35,6 +35,7 @@ class Piradio4Chan:
         self.boards = input_boards
         self.playlist = []
         self.index = 0
+        self.download_count = 0
         self.refresh_rate = 600
         self.base_dir = os.getcwd()
         self.folder = input_folder
@@ -72,12 +73,11 @@ class Piradio4Chan:
             self.collect()
 
     def download(self, name, thread_num):
-        index = 0
         while True:
-            if index < len(self.playlist):
+            if self.index < len(self.playlist):
                 self.sleep_count = 0
-                selected = self.playlist[index]
-                index += 1
+                selected = self.playlist[self.index]
+                self.index += 1
                 board, thread_id, post_id, file = selected.split("@")
                 link = "boards.4chan.org/{}/thread/{}".format(board, thread_id)
                 filename = file.rsplit("/", 1)[-1]
@@ -85,7 +85,7 @@ class Piradio4Chan:
                 if os.path.isfile(self.folder_dir+"/"+filename):
                     print("Skipping {} for duplicate file name.".format(filename))
                     continue
-                print("Downloading:{} : No.{}. ,Downloaded {} files.".format(link, post_id,index))
+                print("Downloading:{} : No.{}. Downloaded {} files.".format(link, post_id,self.download_count))
                 try:
                     time.sleep(2)
                     urlretrieve(file, local_filename)
@@ -98,12 +98,12 @@ class Piradio4Chan:
                             sha1.update(data)
                     new_hash = sha1.hexdigest()
                     if new_hash in self.file_hashes:
-                        print("{} is a repost REEEEE!!", filename)
+                        print("{} is a repost REEEEE!!".format(filename))
                         os.remove(filename)
                         continue
                     self.file_hashes.append(new_hash)
                     pickle.dump(self.file_hashes, open(self.storage_file, 'wb'))
-
+                    self.download_count += 1
                 except OSError:
                     logging.warning("Unable to download {}.".format(str(file)))
                 else:
