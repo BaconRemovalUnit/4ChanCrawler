@@ -7,6 +7,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import pickle
 import re
 import time
@@ -14,6 +15,7 @@ import _thread
 import requests
 import os
 import argparse
+import ffmpeg
 from urllib.request import urlretrieve
 
 # following is the line where you define your searches
@@ -23,15 +25,15 @@ search_board = ["wsg", "gif"]
 
 
 class Piradio4Chan:
-    file_hashes = []
+
     storage_file = "storage.pkl"
-
-
     def __init__(self, keyword, input_file_types, input_boards, input_folder=None):
         self.headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1)\
          AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.95 Safari/537.36'}
         self.keyword = keyword
+        self.file_hashes = []
         self.file_types = input_file_types
+        self.titles = {}
         self.boards = input_boards
         self.playlist = []
         self.index = 0
@@ -39,7 +41,7 @@ class Piradio4Chan:
         self.refresh_rate = 600
         self.base_dir = os.getcwd()
         self.folder = input_folder
-        self.sleep_max = 7
+        self.sleep_max = 10
         self.sleep_count = 0
 
         logging.basicConfig(level=logging.WARNING,
@@ -47,6 +49,13 @@ class Piradio4Chan:
                             datefmt='%a, %d %b %Y %H:%M:%S',
                             filename='links.log',
                             filemode='a')
+
+    def store_to_file(self):
+        ''' method to store existing info to file'''
+        data_to_store = {}
+        data_to_store['file_hashes'] = self.file_hashes
+        data_to_store['titles'] = self.titles
+        pickle.dump(data_to_store, open(self.storage_file, 'wb'))
 
     def start(self):
         if not self.folder:
@@ -58,7 +67,17 @@ class Piradio4Chan:
         self.storage_file = self.folder_dir+"/"+self.storage_file
 
         if os.path.isfile(self.storage_file):
-            self.file_hashes = pickle.load(open(self.storage_file, "rb"))
+            data_to_load = pickle.load(open(self.storage_file, "rb"))
+            # check if data is dict, if using old format, convert to dict
+            if type(data_to_load) == dict:
+                print("new loading")
+                self.file_hashes = data_to_load['file_hashes']
+                print(data_to_load)
+                self.titles = data_to_load['titles']
+
+            else:
+                self.file_hashes = data_to_load
+                self.store_to_file()
 
         print("Searching for {} in board {} with file type {}".format(self.keyword, self.boards, self.file_types))
         if not os.path.exists(self.folder_dir):
@@ -83,7 +102,7 @@ class Piradio4Chan:
                 filename = file.rsplit("/", 1)[-1]
                 local_filename = self.folder_dir+"/"+filename
                 if os.path.isfile(self.folder_dir+"/"+filename):
-                    print("Skipping {} for duplicate file name.".format(filename))
+                    print("Skipping {} for existing local file.".format(filename))
                     continue
                 print("Downloading:{} : No.{}. Downloaded {} files.".format(link, post_id,self.download_count))
                 try:
@@ -99,10 +118,31 @@ class Piradio4Chan:
                     new_hash = sha1.hexdigest()
                     if new_hash in self.file_hashes:
                         print("{} is a repost REEEEE!!".format(filename))
-                        os.remove(filename)
+                        time.sleep(2)
+                        os.remove(local_filename)
                         continue
+
+                    if filename.endswith('.webm'):
+                        metadata = ffmpeg.probe(local_filename)
+                        if 'title' in metadata['format']['tags']:
+                            duration = float(metadata['format']['duration'])
+                            song_title = metadata['format']['tags']['title']
+                            if song_title in self.titles.keys():
+                                duration_diff = abs(self.titles[song_title] - duration)
+                                if duration_diff < 1:
+                                    print("{} is an edited repost REEEEE!!".format(filename))
+                                    time.sleep(2)
+                                    os.remove(filename)
+                                    continue
+                                else:
+                                    self.titles[song_title] = duration
+                            else:
+                                self.titles[song_title] = duration
+
                     self.file_hashes.append(new_hash)
-                    pickle.dump(self.file_hashes, open(self.storage_file, 'wb'))
+
+                    # done processing, save result
+                    self.store_to_file()
                     self.download_count += 1
                 except OSError:
                     logging.warning("Unable to download {}.".format(str(file)))
@@ -168,6 +208,7 @@ class Piradio4Chan:
                 time.sleep(1)  # sleep for each page
             time.sleep(10)  # sleep for each board
         time.sleep(300)  # sleep for each rescan
+        return
 
 
 parser = argparse.ArgumentParser()
@@ -177,7 +218,6 @@ parser.add_argument("-t", "--type", nargs="*", help="file types to crawl")
 parser.add_argument("-f", help="target folder")
 
 args = parser.parse_args()
-
 x = Piradio4Chan(search_word, search_type, search_board)
 if args.k:
     x.keyword = args.k
