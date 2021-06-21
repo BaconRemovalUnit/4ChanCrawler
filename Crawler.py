@@ -7,7 +7,6 @@ import hashlib
 import html
 import json
 import logging
-import math
 import pickle
 import re
 import time
@@ -34,6 +33,7 @@ class Piradio4Chan:
         self.file_hashes = []
         self.file_types = input_file_types
         self.titles = {}
+        self.reposts = []
         self.boards = input_boards
         self.playlist = []
         self.index = 0
@@ -55,6 +55,7 @@ class Piradio4Chan:
         data_to_store = {}
         data_to_store['file_hashes'] = self.file_hashes
         data_to_store['titles'] = self.titles
+        data_to_store['reposts'] = self.reposts
         pickle.dump(data_to_store, open(self.storage_file, 'wb'))
 
     def start(self):
@@ -70,14 +71,14 @@ class Piradio4Chan:
             data_to_load = pickle.load(open(self.storage_file, "rb"))
             # check if data is dict, if using old format, convert to dict
             if type(data_to_load) == dict:
-                print("new loading")
                 self.file_hashes = data_to_load['file_hashes']
-                print(data_to_load)
                 self.titles = data_to_load['titles']
-
+                self.reposts = data_to_load['reposts']
             else:
                 self.file_hashes = data_to_load
                 self.store_to_file()
+                print("Updated save file. Please rerun process again")
+                return
 
         print("Searching for {} in board {} with file type {}".format(self.keyword, self.boards, self.file_types))
         if not os.path.exists(self.folder_dir):
@@ -102,11 +103,14 @@ class Piradio4Chan:
                 filename = file.rsplit("/", 1)[-1]
                 local_filename = self.folder_dir+"/"+filename
                 if os.path.isfile(self.folder_dir+"/"+filename):
-                    print("Skipping {} for existing local file.".format(filename))
+                    print(f"Skipping {filename} for existing local file.")
+                    continue
+                if filename in self.reposts:
+                    print(f'Skipping {filename} for it being a known repost.')
                     continue
                 print("Downloading:{} : No.{}. Downloaded {} files.".format(link, post_id,self.download_count))
                 try:
-                    time.sleep(2)
+                    time.sleep(1)
                     urlretrieve(file, local_filename)
                     sha1 = hashlib.sha1()
                     with open(local_filename, 'rb') as f:
@@ -118,7 +122,8 @@ class Piradio4Chan:
                     new_hash = sha1.hexdigest()
                     if new_hash in self.file_hashes:
                         print("{} is a repost REEEEE!!".format(filename))
-                        time.sleep(2)
+                        self.reposts.append(filename)
+                        self.store_to_file()
                         os.remove(local_filename)
                         continue
 
@@ -131,7 +136,8 @@ class Piradio4Chan:
                                 duration_diff = abs(self.titles[song_title] - duration)
                                 if duration_diff < 1:
                                     print("{} is an edited repost REEEEE!!".format(filename))
-                                    time.sleep(2)
+                                    self.reposts.append(filename)
+                                    self.store_to_file()
                                     os.remove(filename)
                                     continue
                                 else:
