@@ -166,9 +166,12 @@ class Piradio4Chan:
     # adding new match to the list
     def collect(self):
         for board in self.boards:
-            for page_num in range(1, 11):
-                page_data = requests.get('https://a.4cdn.org/{}/{}.json'.format(board, page_num), headers=self.headers)
-                page_data = json.loads(page_data.content.decode('utf-8'))
+            for page_num in range(1, 20):
+                try:
+                    page_data = requests.get('https://a.4cdn.org/{}/{}.json'.format(board, page_num), headers=self.headers)
+                    page_data = json.loads(page_data.content.decode('utf-8'))
+                except json.decoder.JSONDecodeError: # we reached the max page, break
+                    break
                 threads = page_data["threads"]
                 print('>>Searching https://a.4cdn.org/{}/{}.json'.format(board, page_num))
                 for thread in threads:
